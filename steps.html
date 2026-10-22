@@ -135,6 +135,17 @@ button{font-family:inherit;color:inherit;cursor:pointer}
   animation:toast 0.9s ease-out forwards;text-shadow:0 3px 0 #fff}
 @keyframes toast{0%{opacity:0;transform:translate(-50%,20px) scale(.7)}25%{opacity:1;transform:translate(-50%,0) scale(1.05)}100%{opacity:0;transform:translate(-50%,-30px) scale(1)}}
 
+/* music toggle */
+#bf-music{position:fixed;right:16px;bottom:16px;z-index:60;width:54px;height:54px;border:none;border-radius:50%;
+  background:var(--butter);box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;transition:transform .15s}
+#bf-music .ic{width:30px;height:30px;vertical-align:0}
+#bf-music:not(.off) .ic{animation:noteBob 1.3s ease-in-out infinite}
+@keyframes noteBob{0%,100%{transform:rotate(-8deg) translateY(0)}50%{transform:rotate(8deg) translateY(-3px)}}
+#bf-music.off{background:#fff;opacity:.75}
+#bf-music .slash{position:absolute;width:38px;height:4px;background:var(--pink-deep);border-radius:2px;transform:rotate(-40deg)}
+#bf-music:hover{transform:scale(1.06)}
+@media print{#bf-music{display:none!important}}
+
 </style>
 <style>
   .task{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
@@ -260,7 +271,7 @@ const BF = (() => {
     root.addEventListener('click', e => {
       const el = e.target.closest('[data-say]');
       if (!el) return;
-      say(el.dataset.say);
+      BF.say(el.dataset.say);
       el.classList.remove('bounce'); void el.offsetWidth; el.classList.add('bounce');
     });
   }
@@ -269,6 +280,109 @@ const BF = (() => {
 })();
 
 const LEVEL_NAMES = { easy: '簡單 Easy', normal: '普通 Normal', hard: '困難 Hard', super: '超難 Super' };
+
+/* ---------- bubbly background music (generated live, no audio files) ---------- */
+BF.music = (() => {
+  const KEY = 'bf-music';
+  let on = false, master = null, timer = null, nextT = 0, step = 0, seed = 1;
+  const BPM = 96, S8 = 60 / BPM / 2;           // eighth-note length
+  const N = m => 440 * Math.pow(2, (m - 69) / 12);
+  // C – Am – F – G, two bars each
+  const CHORDS = [[60, 64, 67, 72], [57, 60, 64, 69], [53, 57, 60, 65], [55, 59, 62, 67]];
+  const PENTA = [72, 74, 76, 79, 81, 84];
+  const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  let melody = [];
+  function makeMelody() {             // a 16-step phrase per chord, regenerated each loop for variety
+    melody = CHORDS.map(ch => Array.from({ length: 16 }, (_, i) => {
+      if (i % 2 && rnd() < .55) return null;
+      const pool = (i % 4 === 0) ? ch.map(n => n + 12) : PENTA;
+      return pool[Math.floor(rnd() * pool.length)];
+    }));
+  }
+  function pluck(t, f, vol, dur = .5) {   // music-box / bubble pluck
+    const c = BF.ac(); const o = c.createOscillator(), o2 = c.createOscillator(), g = c.createGain();
+    o.type = 'sine'; o2.type = 'triangle';
+    o.frequency.setValueAtTime(f * .985, t); o.frequency.exponentialRampToValueAtTime(f, t + .04);
+    o2.frequency.setValueAtTime(f * 2, t);
+    const g2 = c.createGain(); g2.gain.value = .12;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + .008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); o2.connect(g2); g2.connect(g); g.connect(master);
+    o.start(t); o2.start(t); o.stop(t + dur + .05); o2.stop(t + dur + .05);
+  }
+  function bass(t, f) {
+    const c = BF.ac(); const o = c.createOscillator(), g = c.createGain();
+    o.type = 'triangle'; o.frequency.value = f;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(.22, t + .03);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + S8 * 3.5);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + S8 * 4);
+  }
+  function blip(t) {                      // little "bloop" bubble
+    const c = BF.ac(); const o = c.createOscillator(), g = c.createGain();
+    const f0 = 300 + rnd() * 300;
+    o.type = 'sine'; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f0 * 3, t + .09);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(.12, t + .01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + .12);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + .15);
+  }
+  function tick() {
+    const c = BF.ac();
+    while (nextT < c.currentTime + .25) {
+      const bar = Math.floor(step / 8), ci = Math.floor(bar / 2) % 4, i = step % 16, ch = CHORDS[ci];
+      if (step % 64 === 0) makeMelody();
+      const m = melody[ci][(bar % 2) * 8 + (step % 8)];
+      if (m) pluck(nextT, N(m), (step % 8 === 0) ? .2 : .13, .45);
+      if (step % 4 === 0) bass(nextT, N(ch[0] - 24));
+      if (step % 2 === 1) pluck(nextT, N(ch[(step >> 1) % 3 + 1] ), .05, .3);  // soft arpeggio
+      if (rnd() < .07) blip(nextT + S8 * rnd());
+      nextT += S8 * (step % 2 ? .92 : 1.08);   // a little swing
+      step++;
+    }
+  }
+  function start() {
+    const c = BF.ac(); if (!c) return;
+    if (!master) { master = c.createGain(); master.gain.value = 0; master.connect(c.destination); }
+    master.gain.cancelScheduledValues(c.currentTime);
+    master.gain.setTargetAtTime(.35, c.currentTime, .4);
+    if (!timer) { seed = Math.floor(Math.random() * 233280); makeMelody(); nextT = c.currentTime + .1; step = 0; timer = setInterval(tick, 50); }
+  }
+  function stop() {
+    if (!master) return;
+    const c = BF.ac(); master.gain.setTargetAtTime(0, c.currentTime, .15);
+    setTimeout(() => { if (!on) { clearInterval(timer); timer = null; } }, 600);
+  }
+  function duck(down) { if (master && on) { const c = BF.ac(); master.gain.setTargetAtTime(down ? .08 : .35, c.currentTime, .12); } }
+  function save() { try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (e) {} }
+  function pref() { try { return localStorage.getItem(KEY) !== '0'; } catch (e) { return true; } }
+  function render() {
+    const b = document.getElementById('bf-music'); if (!b) return;
+    b.innerHTML = (BF.icon ? BF.icon('music') : '♪') + (on ? '' : '<span class="slash"></span>');
+    b.title = on ? '關閉背景音樂' : '開啟背景音樂';
+    b.classList.toggle('off', !on);
+  }
+  function set(v) { on = v; save(); v ? start() : stop(); render(); }
+  function init() {
+    const b = document.createElement('button');
+    b.id = 'bf-music'; b.type = 'button';
+    b.addEventListener('click', e => { e.stopPropagation(); set(!on); b.blur(); });
+    document.body.appendChild(b);
+    const want = pref(); on = false; render();
+    if (want) {   // browsers only allow sound after the first tap / key press
+      const kick = () => { if (!on && pref()) set(true); removeEventListener('pointerdown', kick, true); removeEventListener('keydown', kick, true); };
+      addEventListener('pointerdown', kick, true); addEventListener('keydown', kick, true);
+    }
+  }
+  return { init, set, duck, isOn: () => on };
+})();
+(() => {   // lower the music while the English voice is speaking
+  const orig = BF.say;
+  BF.say = (text, rate) => {
+    BF.music.duck(true);
+    orig(text, rate);
+    let n = 0; const iv = setInterval(() => { n++; try { if (!speechSynthesis.speaking || n > 100) { clearInterval(iv); BF.music.duck(false); } } catch (e) { clearInterval(iv); } }, 150);
+  };
+})();
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', BF.music.init); else setTimeout(BF.music.init, 0);
 
 /* Bubble Fun — hand-drawn style illustrations (inline SVG) */
 (() => {
@@ -444,6 +558,7 @@ const LEVEL_NAMES = { easy: '簡單 Easy', normal: '普通 Normal', hard: '困�
     clock: `<circle cx="12" cy="13" r="8" fill="#FCEBB0" stroke="${OUT}" stroke-width="1.6"/><path d="M12 8.5V13l3 2" fill="none" stroke="${OUT}" stroke-width="1.6" stroke-linecap="round"/><path d="M9.5 3.5h5" stroke="${OUT}" stroke-width="1.8" stroke-linecap="round"/>`,
     printer: `<rect x="6.5" y="3.5" width="11" height="6" rx="1" fill="#fff" stroke="${OUT}" stroke-width="1.5"/><rect x="3" y="9" width="18" height="8" rx="2.5" fill="#DCD0F4" stroke="${OUT}" stroke-width="1.5"/><rect x="7" y="14" width="10" height="6.5" rx="1" fill="#fff" stroke="${OUT}" stroke-width="1.5"/>`,
     book: `<path d="M3 5.5q4.5-1.5 9 1 4.5-2.5 9-1v13q-4.5-1.5-9 1-4.5-2.5-9-1z" fill="#FCEBB0" stroke="${OUT}" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 6.5v13" stroke="${OUT}" stroke-width="1.4"/>`,
+    music: `<path d="M9 17.5V6l10-2v11.5" fill="none" stroke="${OUT}" stroke-width="1.7" stroke-linejoin="round"/><ellipse cx="6.6" cy="17.6" rx="3" ry="2.4" fill="#F4A6BE" stroke="${OUT}" stroke-width="1.5"/><ellipse cx="16.6" cy="15.6" rx="3" ry="2.4" fill="#8DBDE9" stroke="${OUT}" stroke-width="1.5"/><path d="M9 9.5l10-2" stroke="${OUT}" stroke-width="1.7"/>`,
     game: `<rect x="2.5" y="7" width="19" height="11" rx="5.5" fill="#C6E2F7" stroke="${OUT}" stroke-width="1.5"/><path d="M7 10.5v4M5 12.5h4" stroke="${OUT}" stroke-width="1.5" stroke-linecap="round"/><circle cx="16" cy="11" r="1.2" fill="#F4A6BE"/><circle cx="18" cy="13.8" r="1.2" fill="#93CF96"/>`
   };
   BF.icon = (k, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${IC[k]}</svg>`;
