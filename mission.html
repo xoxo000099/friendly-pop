@@ -314,6 +314,7 @@ BF.music = (() => {
   }
   function start() {
     const c = BF.ac(); if (!c) return;
+    if (c.state !== 'running') { try { c.resume(); } catch (e) {} }
     if (!master) { master = c.createGain(); master.gain.value = 0; master.connect(c.destination); }
     master.gain.cancelScheduledValues(c.currentTime);
     master.gain.setTargetAtTime(.35, c.currentTime, .4);
@@ -341,8 +342,16 @@ BF.music = (() => {
     document.body.appendChild(b);
     const want = pref(); on = false; render();
     if (want) {   // browsers only allow sound after the first tap / key press
-      const kick = () => { if (!on && pref()) set(true); removeEventListener('pointerdown', kick, true); removeEventListener('keydown', kick, true); };
-      addEventListener('pointerdown', kick, true); addEventListener('keydown', kick, true);
+      const EVTS = ['pointerdown', 'pointerup', 'mousedown', 'click', 'touchend', 'keydown'];
+      const kick = () => {
+        if (!pref()) return done();
+        const c = BF.ac(); if (!c) return;
+        if (c.state !== 'running') { try { c.resume(); } catch (e) {} }
+        if (!on) set(true);
+        if (c.state === 'running') done();
+      };
+      const done = () => EVTS.forEach(ev => removeEventListener(ev, kick, true));
+      EVTS.forEach(ev => addEventListener(ev, kick, true));
     }
   }
   return { init, set, duck, isOn: () => on };
